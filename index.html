@@ -20,6 +20,8 @@ h2 { color:var(--navy); font-size:18px; margin:0; }
 button { padding:9px 13px; border:1px solid var(--navy); border-radius:7px; background:white; color:var(--navy); font-weight:bold; cursor:pointer; }
 button.primary { background:var(--navy); color:white; }
 .progress-text { color:var(--navy); font-weight:bold; }
+.sync-status { display:inline-block; margin-left:8px; padding:3px 9px; border-radius:12px; font-size:12px; font-weight:bold; }
+.sync-status.ok { background:#e3f4ea; color:#2f6b4a; } .sync-status.off { background:#fdf1dc; color:#8a5a12; }
 section { margin-top:22px; }
 h3 { color:var(--dark); font-size:16px; margin:0 0 8px; }
 .table-wrap { overflow-x:auto; border:1px solid var(--line); }
@@ -57,7 +59,7 @@ tr.purchased .description { color:#8293a2; text-decoration:line-through; }
 }
 @media print {
  body { padding:0; background:white; } .sheet { max-width:none; padding:0; border:0; box-shadow:none; }
- .toolbar,.footer-note { display:none !important; }
+ .toolbar,.footer-note,.sync-status { display:none !important; }
  thead th { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
  tr { break-inside:avoid; } section,.summary { break-inside:avoid; }
  .store-name,.price-input { border:0; padding:0; }
@@ -73,7 +75,7 @@ tr.purchased .description { color:#8293a2; text-decoration:line-through; }
 <p class="instructions">Digite o nome das quatro papelarias no cabeçalho e informe o preço de cada material para comparar os valores.</p>
 </header>
 <div class="toolbar">
-<span class="progress-text" id="progress">0 de 62 itens marcados</span>
+<span><span class="progress-text" id="progress">0 de 62 itens marcados</span> <span class="sync-status off" id="sync-status">Carregando…</span></span>
 <div class="buttons">
 <button type="button" onclick="window.print()">Imprimir</button>
 <button class="primary" type="button" onclick="clearAll()">Limpar lista</button>
@@ -175,52 +177,99 @@ tr.purchased .description { color:#8293a2; text-decoration:line-through; }
 </section>
 <p class="footer-note">Lista de materiais • Maternal III • 2027</p>
 </main>
-<script>
-(() => {
- const KEY="vila-saber-maternal-III-2027-four-stores";
- const rows=[...document.querySelectorAll("tbody tr[data-id]")];
- const names=[...document.querySelectorAll(".store-name")];
- let saved={}; try { saved=JSON.parse(localStorage.getItem(KEY)||"{}"); } catch(e) {}
- const parse=v=>{ if(!v)return 0; let s=String(v).replace(/R\$/gi,"").replace(/\s/g,""); if(s.includes(","))s=s.replace(/\./g,"").replace(",","."); const n=Number(s); return Number.isFinite(n)?n:0; };
- const fmt=n=>n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
- function persist(){
-   const state={names:[1,2,3,4].map(k=>(names.find(o=>+o.dataset.store===k)||{}).value||""),items:{}};
-   rows.forEach(r=>state.items[r.dataset.id]={checked:r.querySelector(".item-check").checked,prices:[...r.querySelectorAll(".price-input")].map(i=>i.value)});
-   try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}
- }
- names.forEach(n=>{const k=+n.dataset.store; n.value=saved.names?.[k-1]||"";
-   n.addEventListener("input",()=>{names.forEach(o=>{if(o!==n&&+o.dataset.store===k)o.value=n.value;});update();persist();});});
- rows.forEach(r=>{
-   const old=saved.items?.[r.dataset.id]||{};
-   const cb=r.querySelector(".item-check"), inputs=[...r.querySelectorAll(".price-input")];
-   cb.checked=!!old.checked;
-   inputs.forEach((inp,i)=>{inp.value=old.prices?.[i]||""; inp.addEventListener("input",()=>{persist();update();});
-     inp.addEventListener("blur",()=>{if(inp.value.trim())inp.value=parse(inp.value).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});persist();update();});
-   });
-   cb.addEventListener("change",()=>{persist();update();});
- });
- function update(){
-   const count=rows.filter(r=>r.querySelector(".item-check").checked).length, total=rows.length;
-   const totals=[0,0,0,0], bought=[0,0,0,0]; let all=0,boughtAll=0;
-   rows.forEach(r=>{
-     const checked=r.querySelector(".item-check").checked; r.classList.toggle("purchased",checked);
-     r.querySelectorAll(".price-input").forEach((inp,i)=>{const v=parse(inp.value);totals[i]+=v;all+=v;if(checked){bought[i]+=v;boughtAll+=v;}});
-   });
-   document.getElementById("progress").textContent=`${count} de ${total} itens marcados`;
-   document.getElementById("totalItems").textContent=total;
-   document.getElementById("checkedItems").textContent=count;
-   document.getElementById("missingItems").textContent=total-count;
-   document.getElementById("percent").textContent=Math.round(count/total*100)+"%";
-   document.getElementById("allTotal").textContent=fmt(all);
-   document.getElementById("boughtTotal").textContent=fmt(boughtAll);
-   totals.forEach((v,i)=>{document.getElementById("store-total-"+(i+1)).textContent=fmt(v);});
-   [1,2,3,4].forEach(k=>{const n=names.find(o=>+o.dataset.store===k);document.getElementById("store-label-"+k).textContent=(n&&n.value)||"Papelaria "+k;});
- }
- window.clearAll=()=>{if(!confirm("Apagar todas as marcações, preços e nomes das papelarias?"))return;
- rows.forEach(r=>{r.querySelector(".item-check").checked=false;r.querySelectorAll(".price-input").forEach(i=>i.value="");});
- names.forEach(n=>n.value="");try{localStorage.removeItem(KEY);}catch(e){}update();};
- update();
-})();
+<script type="module">
+// ===== CONFIGURAÇÃO DO FIREBASE =====
+// Cole aqui o firebaseConfig do seu projeto. Enquanto estiver null, a lista salva só neste navegador.
+const FIREBASE_CONFIG = null;
+const DB_PATH = "listas/maternal3-2027";
+// ====================================
+
+const KEY="vila-saber-maternal-III-2027-four-stores";
+const rows=[...document.querySelectorAll("tbody tr[data-id]")];
+const names=[...document.querySelectorAll(".store-name")];
+const statusEl=document.getElementById("sync-status");
+const setStatus=(t,ok)=>{statusEl.textContent=t;statusEl.className="sync-status "+(ok?"ok":"off");};
+const parse=v=>{ if(!v)return 0; let s=String(v).replace(/R\$/gi,"").replace(/\s/g,""); if(s.includes(","))s=s.replace(/\./g,"").replace(",","."); const n=Number(s); return Number.isFinite(n)?n:0; };
+const fmt=n=>n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const nameInputs=k=>names.filter(o=>+o.dataset.store===k);
+
+function readState(){
+  const state={names:[1,2,3,4].map(k=>nameInputs(k)[0]?.value||""),items:{}};
+  rows.forEach(r=>state.items[r.dataset.id]={checked:r.querySelector(".item-check").checked,prices:[...r.querySelectorAll(".price-input")].map(i=>i.value)});
+  return state;
+}
+function applyState(s){
+  s=s||{};
+  [1,2,3,4].forEach(k=>nameInputs(k).forEach(n=>{if(n!==document.activeElement)n.value=s.names?.[k-1]||"";}));
+  rows.forEach(r=>{
+    const it=s.items?.[r.dataset.id]||{};
+    r.querySelector(".item-check").checked=!!it.checked;
+    r.querySelectorAll(".price-input").forEach((inp,i)=>{if(inp!==document.activeElement)inp.value=it.prices?.[i]||"";});
+  });
+  update();
+}
+function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(readState()));}catch(e){}}
+let local={}; try{local=JSON.parse(localStorage.getItem(KEY)||"{}");}catch(e){}
+applyState(local);
+
+// remote: grava cada campo separadamente para duas pessoas editarem ao mesmo tempo sem sobrescrever
+let remoteSet=null, remoteClear=null;
+const push=(path,value)=>{saveLocal(); if(remoteSet)remoteSet(path,value);};
+
+names.forEach(n=>{const k=+n.dataset.store;
+  n.addEventListener("input",()=>{nameInputs(k).forEach(o=>{if(o!==n)o.value=n.value;});update();push("names/"+(k-1),n.value);});
+});
+rows.forEach(r=>{
+  const id=r.dataset.id, cb=r.querySelector(".item-check");
+  r.querySelectorAll(".price-input").forEach((inp,i)=>{
+    inp.addEventListener("input",()=>{update();push(`items/${id}/prices/${i}`,inp.value);});
+    inp.addEventListener("blur",()=>{if(inp.value.trim())inp.value=parse(inp.value).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});update();push(`items/${id}/prices/${i}`,inp.value);});
+  });
+  cb.addEventListener("change",()=>{update();push(`items/${id}/checked`,cb.checked);});
+});
+
+function update(){
+  const count=rows.filter(r=>r.querySelector(".item-check").checked).length, total=rows.length;
+  const totals=[0,0,0,0]; let all=0,boughtAll=0;
+  rows.forEach(r=>{
+    const checked=r.querySelector(".item-check").checked; r.classList.toggle("purchased",checked);
+    r.querySelectorAll(".price-input").forEach((inp,i)=>{const v=parse(inp.value);totals[i]+=v;all+=v;if(checked)boughtAll+=v;});
+  });
+  document.getElementById("progress").textContent=`${count} de ${total} itens marcados`;
+  document.getElementById("totalItems").textContent=total;
+  document.getElementById("checkedItems").textContent=count;
+  document.getElementById("missingItems").textContent=total-count;
+  document.getElementById("percent").textContent=Math.round(count/total*100)+"%";
+  document.getElementById("allTotal").textContent=fmt(all);
+  document.getElementById("boughtTotal").textContent=fmt(boughtAll);
+  totals.forEach((v,i)=>{document.getElementById("store-total-"+(i+1)).textContent=fmt(v);});
+  [1,2,3,4].forEach(k=>{document.getElementById("store-label-"+k).textContent=nameInputs(k)[0]?.value||"Papelaria "+k;});
+}
+
+window.clearAll=()=>{if(!confirm("Apagar todas as marcações, preços e nomes das papelarias para TODOS que usam a lista?"))return;
+  try{localStorage.removeItem(KEY);}catch(e){}
+  applyState({}); if(remoteClear)remoteClear();
+};
+
+if(!FIREBASE_CONFIG){
+  setStatus("Salvando só neste aparelho",false);
+}else{
+  setStatus("Conectando…",false);
+  try{
+    const V="10.14.1";
+    const {initializeApp}=await import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`);
+    const {getDatabase,ref,set,onValue,get}=await import(`https://www.gstatic.com/firebasejs/${V}/firebase-database.js`);
+    const db=getDatabase(initializeApp(FIREBASE_CONFIG));
+    const root=ref(db,DB_PATH);
+    // primeira vez: se a nuvem estiver vazia, envia o que já existe neste aparelho
+    const snap=await get(root);
+    if(!snap.exists()){const s=readState(); if(s.names.some(Boolean)||Object.values(s.items).some(it=>it.checked||it.prices.some(Boolean)))await set(root,s);}
+    remoteSet=(path,value)=>set(ref(db,DB_PATH+"/"+path),value).catch(()=>setStatus("Erro ao salvar online",false));
+    remoteClear=()=>set(root,null);
+    onValue(root,s=>{applyState(s.val());saveLocal();});
+    onValue(ref(db,".info/connected"),s=>s.val()?setStatus("Sincronizado online ✓",true):setStatus("Sem conexão – salvando neste aparelho",false));
+  }catch(e){console.error(e);setStatus("Erro ao conectar – salvando neste aparelho",false);}
+}
 </script>
 </body>
 </html>
